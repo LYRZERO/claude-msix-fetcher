@@ -38,14 +38,61 @@ jobs:
       - name: 提取版本号
         shell: pwsh
         run: |
-          # 从文件名或文件属性提取版本
-          $file = Get-Item "Claude.msix"
-          $versionInfo = (Get-AppxPackage -Path "Claude.msix" -ErrorAction SilentlyContinue).Version
-          if (-not $versionInfo) {
-            $versionInfo = "latest"
+          if (-not (Test-Path "Claude.msix")) {
+            Write-Error "Claude.msix 未找到"
+            exit 1
           }
-          echo "VERSION=$versionInfo" >> $env:GITHUB_ENV
-          Write-Host "版本: $versionInfo"
+
+          $tempDir = Join-Path $env:TEMP ("claude_msix_" + [guid]::NewGuid().ToString())
+          New-Item -Path $tempDir -ItemType Directory | Out-Null
+
+          try {
+            # 解压 MSIX（MSIX 兼容 ZIP）
+            Expand-Archive -Path "Claude.msix" -DestinationPath $tempDir -Force
+
+            # 常见清单路径
+            $possibleManifests = @(
+              (Join-Path $tempDir "AppxManifest.xml"),
+              (Join-Path $tempDir "AppxBundleManifest.xml"),
+              (Join-Path $tempDir "AppxMetadata\AppxBundleManifest.xml")
+            )
+
+            $manifestPath = $possibleManifests | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+            if (-not $manifestPath) {
+              Write-Warning "未在包内找到 AppxManifest.xml 或 AppxBundleManifest.xml，使用 'latest' 作为版本"
+              $versionInfo = "latest"
+            } else {
+              try {
+                [xml]$xml = Get-Content $manifestPath -ErrorAction Stop
+              } catch {
+                Write-Warning "读取清单失败：$($_.Exception.Message). 使用 'latest' 作为版本"
+                $versionInfo = "latest"
+              }
+
+              if (-not $versionInfo) {
+                $versionInfo = $null
+
+                if ($xml.Package -and $xml.Package.Identity) {
+                  $versionInfo = $xml.Package.Identity.Version
+                } elseif ($xml.Bundle -and $xml.Bundle.Identity) {
+                  $versionInfo = $xml.Bundle.Identity.Version
+                } elseif ($xml.Package -and $xml.Package.Properties -and $xml.Package.Properties.'Identity') {
+                  $versionInfo = $xml.Package.Properties.Identity.Version
+                }
+
+                if (-not $versionInfo) {
+                  Write-Warning "在清单中未找到版本信息，使用 'latest' 作为版本"
+                  $versionInfo = "latest"
+                }
+              }
+            }
+
+            Write-Host "版本: $versionInfo"
+            echo "VERSION=$versionInfo" >> $env:GITHUB_ENV
+          } finally {
+            Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+          }
 
       - name: 创建 Release 并上传
         uses: softprops/action-gh-release@v2

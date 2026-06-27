@@ -1,0 +1,11 @@
+GitHub Copilot Chat Assistant
+
+问题诊断（简短）
+
+日志错误：A parameter cannot be found that matches parameter name 'Path'。
+原因：脚本使用了 Get-AppxPackage -Path "Claude.msix" 来从 MSIX 文件读版本，但在当前 runner 的 PowerShell/模块上 Get-AppxPackage 不接受 -Path 参数（该 cmdlet 在该环境不能直接读取 .msix 文件）。因此步骤“提取版本号”失败并导致作业退出。
+解决方案（直接替换“提取版本号”步骤）
+
+不依赖 Get-AppxPackage。把 MSIX 当作 zip（MSIX = ZIP 格式容器），从包中读取 AppxManifest.xml 并解析 Identity/@Version。
+以下 PowerShell 片段可稳健地在 Windows runner 上运行并把版本写入 GITHUB_ENV（替换掉原来使用 Get-AppxPackage 的步骤）。
+建议的 workflow 步骤（替换 .github/workflows/main.yml 中 “提取版本号” 步骤的 run 内容）：
